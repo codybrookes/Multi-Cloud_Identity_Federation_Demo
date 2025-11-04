@@ -1,4 +1,4 @@
-# Multi-Cloud_Identity_Federation_Project
+# Multi-Cloud Identity Federation Project
 Demonstrates the difference between federation and SSO between platform(Systems - AWS + Azure) 
 **Technologies:** AWS, Azure AD, Python, Lambda, S3, SES, CloudTrail, CloudWatch
 
