@@ -1,63 +1,119 @@
 # Multi-Cloud Identity Federation Project
 Demonstrates the difference between federation and SSO between platform(Systems - AWS + Azure) 
-**Technologies:** AWS, Azure AD, Python, Lambda, S3, SES, CloudTrail, CloudWatch
+**Technologies:** AWS, Azure AD, CloudTrail, CloudWatch
 
-## Overview
-This project demonstrates multi-cloud identity federation between Azure AD and AWS. Users authenticate with Azure credentials to access AWS resources securely. The system automates IAM user provisioning in AWS, sends email notifications, and monitors all identity events.
+Project Summary
 
-## Features
-- SAML-based federation: Azure AD → AWS IAM
-- Automated user and role provisioning from CSV
-- Least-privilege policy enforcement
-- SES notifications on new users
-- CloudTrail logging and CloudWatch monitoring
+This project demonstrates the deployment and security hardening of a robust, production-ready identity federation solution, enabling users authenticated in Azure Active Directory (IdP) to seamlessly access Amazon Web Services (SP) resources using SAML 2.0.
 
-## Architecture
-Azure AD → SAML → AWS IAM Roles
-CSV → Lambda → IAM APIs → SES notifications
-CloudTrail → S3 & CloudWatch → Alarms/SNS
+The core goal was to implement centralized identity control and enforce Zero Trust principles, ensuring that all access to AWS is conditional, temporary, and auditable.
 
-### Prerequisites
-- AWS account with admin privileges
-- Azure AD tenant
-- Python 3.9+ and pip
-- AWS CLI configured
-- Optional: AWS SAM CLI
+# Key Achievements
 
-### Steps
-1. **Azure AD setup**
-   - Register enterprise app and configure SAML SSO
-   - Assign users or groups
-   - Download metadata XML
+SAML 2.0 Implementation: Established mutual trust between Azure AD and AWS IAM.
 
-2. **AWS setup**
-   - Create SAML IdP with Azure metadata
-   - Create IAM roles for federated access
+Centralized MFA Enforcement: Implemented Azure Conditional Access to require Multi-Factor Authentication (MFA) for all AWS access attempts, centralizing security policy.
 
-3. **Automate AWS IAM**
-   - Upload `users.csv` to S3
-   - Deploy `iam_federation.py` Lambda
-   - Configure environment variables
-   - Attach minimal IAM role to Lambda
+Least Privilege: Users assume the AzureAD_ReadOnlyRole, granting only the necessary permissions.
 
-4. **Email Notifications**
-   - Verify `SES_FROM` email in SES
-   - Test notifications via Lambda
+Troubleshooting: Successfully resolved a common Azure AD SAML assertion quoting error by using an attribute-based workaround (due to plan limitations), ensuring the ARN string was passed unquoted to the AWS Security Token Service (STS).
 
-5. **Monitoring & Auditing**
-   - Enable CloudTrail
-   - Configure CloudWatch metric filters and alarms
-   - Optionally, archive logs to S3/Glacier
+Auditability: Integrated CloudTrail and Azure Sign-in Logs for end-to-end security monitoring.
 
-## Security Best Practices
-- Prefer temporary credentials and centralized identity
-- Avoid long-lived access keys unless necessary
-- Least-privilege policies for Lambda and IAM roles
-- Keep CloudTrail logs in a secure S3 bucket
+# Architecture Overview
 
-## Files in this Repo
-- `iam_federation.py` — Lambda function script
-- `lambda-policy.json` — Least-privilege policy for Lambda
-- `template.yaml` — Optional SAM template
-- `users.csv` — Example input file
-- `README.md` — This file
+The solution follows a standard identity federation pattern:
+
+Authentication: User authenticates with Azure AD.
+
+Authorization (Policy Check): Azure Conditional Access enforces MFA.
+
+Assertion: Azure AD generates a signed SAML assertion, including the required https://aws.amazon.com/SAML/Attributes/Role claim.
+
+Assume Role: AWS STS validates the assertion and the Role ARN, granting temporary access credentials.
+
+Access: User lands in the AWS Console with the permissions defined by the assumed IAM role.
+
+# Implementation Details
+
+1. AWS IAM Configuration
+
+The following Trust Policy was applied to the AzureAD_ReadOnlyRole to establish trust with the Identity Provider (IdP) created in AWS.
+
+aws/saml-trust.json
+
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Effect": "Allow",
+			"Principal": {
+				"Federated": "arn:aws:iam::************:saml-provider/AzureAD-IdP"
+			},
+			"Action": "sts:AssumeRoleWithSAML",
+			"Condition": {
+				"StringEquals": {
+					"SAML:aud": "[https://signin.aws.amazon.com/saml](https://signin.aws.amazon.com/saml)"
+				}
+			}
+		}
+	]
+}
+
+
+# CLI Snippets (Example)
+
+1. Create the IAM Role with the SAML Trust Policy
+aws iam create-role \
+  --role-name AzureAD_ReadOnlyRole \
+  --assume-role-policy-document file://saml-trust.json
+
+2. Attach the least-privilege policy
+aws iam attach-role-policy \
+  --role-name AzureAD_ReadOnlyRole \
+  --policy-arn arn:aws:iam::aws:policy/ReadOnlyAccess
+
+
+2. Azure AD Role Claim Workaround
+
+To resolve the Not authorized to perform sts:AssumeRoleWithSAML error caused by Azure AD automatically quoting the role ARN string, the following non-standard, but effective, workaround was implemented:
+
+Claim Name
+
+Configuration
+
+Purpose
+
+https://aws.amazon.com/SAML/Attributes/Role
+
+Source: user.extensionAttribute1
+
+Bypasses quoting by pulling the raw string directly from the user object.
+
+ARN String Value
+
+arn:aws:iam::197**********:role/AzureAD_ReadOnlyRole,arn:aws:iam::197******:saml-provider/AzureAD-IdP
+
+The exact combined string required by AWS STS.
+
+3. Conditional Access Policy
+
+A policy named Require_MFA_for_AWS_Federation was created to enforce MFA.
+
+Setting
+
+Value
+
+Users
+
+Specific Test User (or Groups in a Production environment)
+
+Cloud Apps
+
+AWS-Federation Enterprise Application
+
+Grant
+
+Require multi-factor authentication
+
+
